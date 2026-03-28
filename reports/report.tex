@@ -1,18 +1,31 @@
+%!TEX TS-program = pdflatex
 \documentclass[11pt,a4paper]{article}
 
-% --- Packages ---
+% --- PDFLATEX PREAMBLE BLOCK ---
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage[margin=2.5cm]{geometry}
+\usepackage[a4paper, top=2.5cm, bottom=2.5cm, left=2cm, right=2cm]{geometry}
+\usepackage[english]{babel}
+
+% Set default font to a clean Sans Serif (Latin Modern)
+\usepackage{lmodern}
+\renewcommand{\familydefault}{\sfdefault}
+
+% --- Additional Packages ---
 \usepackage{amsmath,amssymb}
 \usepackage{booktabs}
-\usepackage{enumitem}
-\usepackage{hyperref}
 \usepackage{xcolor}
 \usepackage{fancyhdr}
 \usepackage{parskip}
-\usepackage{graphicx}
 \usepackage{float}
+\usepackage{placeins} % <--- AJOUT POUR LE FLOATBARRIER
+
+% IMPORTANT OVERLEAF : 
+% Retirez l'option "[demo]" ci-dessous lorsque vous compilerez sur Overleaf avec vos vraies images.
+\usepackage{graphicx} 
+
+% hyperref must be the last package loaded
+\usepackage{hyperref}
 
 % --- Colors ---
 \definecolor{darkblue}{HTML}{1a1a2e}
@@ -56,8 +69,7 @@
 \textcolor{gray}{\rule{8cm}{0.5pt}}\\[1.5cm]
 
 {\large Nassim Taier}\\[0.4cm]
-{\normalsize M2 Probability and Finance (El Karoui)\\
-Sorbonne Universit\'e \& \'Ecole Polytechnique}\\[1.5cm]
+
 
 {\normalsize March 2026}
 
@@ -75,37 +87,29 @@ Sorbonne Universit\'e \& \'Ecole Polytechnique}\\[1.5cm]
 % ============================================================
 \section{Introduction}
 
-This report presents a systematic approach to forecasting short-term commodity returns using machine learning. The objective is to predict 1-week and 1-month returns from 60 anonymised features, with a strict methodology designed to prevent data leakage and produce realistic, out-of-sample performance estimates.
-
-The key methodological principles are:
-\begin{enumerate}[nosep]
-    \item All preprocessing (imputation, scaling) is fitted on training data only.
-    \item Cross-validation uses temporal splits exclusively --- no random K-fold.
-    \item Target lags are shifted by the forecast horizon to avoid overlap.
-    \item An embargo gap separates train and test sets in walk-forward folds.
-    \item All reported metrics are computed on non-overlapping observations.
-\end{enumerate}
-
-The analysis progresses from simple linear baselines (ElasticNet) to gradient-boosted trees (XGBoost) with engineered features, demonstrating that careful feature engineering improves signal quality beyond what the model can extract from raw inputs alone.
+We forecast 5-day and 21-day commodity returns using 60 anonymised features. To avoid look-ahead bias, we use a strict walk-forward cross-validation method. We shift target variables by the forecast horizon to prevent overlap, and we leave a gap between training and testing sets. All performance metrics, such as the Information Coefficient (IC) and Sharpe ratio, are calculated on non-overlapping periods. We compare a regularised linear model (ElasticNet) with gradient-boosted trees (XGBoost) and measure how much feature engineering improves the results.
 
 % ============================================================
 % 2. DATA
 % ============================================================
 \section{Data Description}
 
-The dataset consists of daily observations with 60 anonymised features and two target variables: 1-week forward returns (\texttt{output1\_1w}) and 1-month forward returns (\texttt{output1\_1m}). Features are provided without labels, preventing economic interpretation but allowing a purely statistical approach to signal extraction.
+The dataset contains $T = 6,549$ daily observations from January 2000 to February 2025. The original 60 features are anonymised. Our targets are the forward returns over $h$ days, where $h$ is either 5 or 21.
 
-\begin{table}[H]
+The data has many missing values, averaging 43.0\%. Since the features have no economic labels, our approach relies entirely on finding statistical patterns rather than using macroeconomic theory.
+
+\begin{table}[htbp]
 \centering
-\caption{Dataset overview}
+\caption{Dataset properties}
 \begin{tabular}{@{}ll@{}}
 \toprule
-\textbf{Property} & \textbf{Value} \\
+\textbf{Parameter} & \textbf{Specification} \\
 \midrule
-Features & 60 (anonymised) \\
-Targets & 1-week return, 1-month return \\
-Missing values & $\sim$15\% overall (varies by feature) \\
-Horizons & 5 trading days (1w), 21 trading days (1m) \\
+Period & 2000-01-03 to 2025-02-06 \\
+Observations ($T$) & 6,549 \\
+Raw Features & 60 \\
+Prediction Horizons ($h$) & 5 days, 21 days \\
+Missing Data Fraction & 43.0\% \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -115,218 +119,175 @@ Horizons & 5 trading days (1w), 21 trading days (1m) \\
 % ============================================================
 \section{Exploratory Data Analysis}
 
-\subsection{Target Distributions}
+\subsection{Target Distributions and Stationarity}
 
-Both target distributions are approximately symmetric around zero with heavy tails (excess kurtosis), consistent with financial return distributions. The 1-month target exhibits higher variance, as expected for a longer horizon. Augmented Dickey-Fuller tests confirm stationarity of both series ($p < 0.01$).
+The return distributions show standard financial characteristics: they are roughly symmetric around zero but have heavy tails (kurtosis of 8.63 for the 1-week horizon and 2.93 for the 1-month horizon). Both return series are strictly stationary based on Augmented Dickey-Fuller tests ($p < 10^{-20}$).
 
-\subsection{Feature--Target Correlations}
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{figures/eda_distributions.png}
+    \caption{Target distributions for the 5-day and 21-day horizons.}
+\end{figure}
 
-Individual feature--target correlations are generally weak ($|r| < 0.15$), which is expected for financial data: the signal is distributed across many features rather than concentrated in a few. This motivates the use of ensemble tree models that can combine many weak predictors.
+\subsection{Missing Data Structure}
 
-\subsection{Predictiveness Stability}
+The dataset exhibits a severe and uneven missing data rate (43.0\% overall). Specifically, 27 out of 60 features have over 50\% missing values. Feature availability increases dramatically in distinct historical steps (e.g., around 2004 and 2013).
 
-Rolling correlation analysis (252-day window) reveals that feature predictiveness is not stable over time. Features that are strong predictors in one period may lose predictive power in another. This non-stationarity motivates walk-forward evaluation rather than a single train/test split, and suggests that adaptive or regime-conditional models could further improve performance.
+This structural missingness poses a significant machine learning risk: because XGBoost natively handles NaNs, the model might learn to use the \textit{presence or absence} of a feature as a proxy for the temporal regime, leading to subtle temporal overfitting.
 
-\subsection{Feature Redundancy}
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{figures/eda_availability.png}
+    
+    \vspace{0.5cm}
+    
+    \includegraphics[width=\textwidth]{figures/eda_missing.png}
+    \caption{Feature availability over time (top) and missing value percentage per feature (bottom).}
+\end{figure}
 
-The feature correlation matrix reveals clusters of highly correlated features ($|r| > 0.9$). This redundancy is partially addressed by XGBoost's built-in feature selection and by L1 regularisation in ElasticNet. The engineered features (z-scores, ranks) provide alternative representations that reduce sensitivity to multicollinearity.
+\subsection{Feature Predictiveness and Stability}
+
+While the median feature-target correlation is weak, the right tail of the correlation distribution reveals exceptionally strong individual predictors (e.g., correlations up to 0.35 with the 21-day return). In standard financial datasets, such extreme individual correlations are rare and warrant caution regarding potential upstream look-ahead bias.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\textwidth]{figures/eda_target_corr.png}
+    \caption{Distribution of Pearson correlations between raw features and targets.}
+\end{figure}
+
+Rolling correlations over 252 days show that the predictive power of these features changes significantly over time. We also found dense clusters of highly correlated features ($|r| > 0.9$). This redundancy requires regularization in linear models and favors tree-based models capable of handling collinear inputs.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.6\textwidth]{figures/eda_corr_matrix.png}
+    \caption{Feature correlation matrix revealing clusters of highly collinear variables.}
+\end{figure}
+
+\FloatBarrier
 
 % ============================================================
 % 4. FEATURE ENGINEERING
 % ============================================================
 \section{Feature Engineering}
 
-A total of 140+ features were engineered from the original 60, using only backward-looking transformations to prevent any form of look-ahead bias:
+We expanded the feature set from 60 to 314 using only backward-looking transformations to avoid using future information. These new features are designed to capture recent trends and volatility.
 
-\begin{itemize}[nosep]
-    \item \textbf{Rolling z-scores} (21d, 63d): Normalise each feature by its recent rolling mean and standard deviation, capturing whether current values are unusual relative to the recent regime.
-    \begin{equation}
-        z_{t}^{(w)} = \frac{x_t - \bar{x}_{t-w:t}}{\sigma_{t-w:t} + \epsilon}
-    \end{equation}
+For a feature $x_t$ at time $t$, we calculated rolling z-scores to measure how far the current value is from its recent average:
+\begin{equation}
+    z_{t}^{(w)} = \frac{x_t - \mu_{t-w:t}}{\sigma_{t-w:t} + \epsilon}
+\end{equation}
+where $w \in \{21, 63\}$ is the lookback window. Cross-sectional percentile ranks were computed to see how each feature compares to others on the same day, which reduces the impact of extreme outliers.
 
-    \item \textbf{Cross-sectional percentile ranks}: Rank each feature value relative to all other features on the same date, capturing relative positioning across the feature space. This is robust to outliers and non-stationarity in levels.
-
-    \item \textbf{Rolling volatility}: Standard deviation over 21 days for the top 10 most correlated features, capturing changes in feature stability that may signal regime transitions.
-
-    \item \textbf{Feature lags}: Lagged values of top features, shifted by the forecast horizon $h$ to avoid overlap:
-    \begin{equation}
-        x_{t}^{\text{lag}_k} = x_{t - (h + k)}, \quad k \in \{0, 1, 2, 5, 10\}
-    \end{equation}
-
-    \item \textbf{Momentum features}: Change in feature value over the forecast horizon, measuring the recent trend in each predictor:
-    \begin{equation}
-        \Delta x_t^{(h)} = x_t - x_{t-h}
-    \end{equation}
-\end{itemize}
-
-These transformations increase the feature space from 60 to approximately 200 features. XGBoost's internal feature selection via split gain and L2 regularisation handle the increased dimensionality without explicit feature selection.
+We measured local stability using 21-day rolling standard deviations for the most correlated features. Feature momentum was calculated as the change over the forecast horizon. Finally, we added lagged versions of the top features, shifted by $h$ days to avoid overlap:
+\begin{equation}
+    x_{t}^{\text{lag}_k} = x_{t - (h + k)}, \quad k \in \{0, 1, 2, 5, 10\}
+\end{equation}
 
 % ============================================================
 % 5. MODELING
 % ============================================================
-\section{Modeling Approach}
+\section{Modeling Methodology}
 
-\subsection{Model Progression}
+We tested three approaches. First, an ElasticNet regression acts as our linear baseline, using a simple method to fill missing values and scale the data. Second, an XGBoost model is trained on the raw 60 features. XGBoost naturally handles the 43.0\% missing data, so we do not need to fill in missing values manually. Finally, we trained XGBoost on the expanded set of 314 features to see if the engineered features improve performance.
 
-Three model classes are evaluated in a principled progression from simple to complex:
-
-\begin{enumerate}[nosep]
-    \item \textbf{ElasticNet}: Linear baseline with combined L1/L2 regularisation. Internal cross-validation uses \texttt{TimeSeriesSplit} with 3 folds. Preprocessing (mean imputation + standard scaling) is fitted on train data only via a scikit-learn \texttt{Pipeline}.
-
-    \item \textbf{XGBoost (raw features)}: Gradient-boosted trees on the original 60 features plus horizon-shifted target lags. XGBoost handles missing values natively, eliminating the need for imputation.
-
-    \item \textbf{XGBoost (engineered features)}: Same architecture on the expanded feature set ($\sim$200 features). This tests whether explicit feature engineering adds predictive power beyond what the tree model discovers through its own splits.
-\end{enumerate}
-
-\subsection{Evaluation Framework}
-
-All models are evaluated exclusively through 5-fold walk-forward cross-validation. Each fold uses a growing training window and a fixed-size test window, with an embargo gap of $h$ days (where $h$ is the forecast horizon) between the last training observation and the first test observation:
-
-\begin{equation}
-    \text{Train}_k = \{1, \ldots, T_k - h\}, \quad \text{Test}_k = \{T_k + 1, \ldots, T_{k+1}\}
-\end{equation}
-
-No single train/test split results are reported, as they are sensitive to the arbitrary choice of split point and can be misleadingly optimistic or pessimistic.
-
-\subsection{Metrics}
-
-Primary evaluation metrics are:
-\begin{itemize}[nosep]
-    \item \textbf{Pearson IC} (information coefficient): Correlation between predicted and realised returns. Computed on non-overlapping observations only (every $h$-th observation).
-    \item \textbf{Hit rate}: Fraction of correct directional predictions (non-overlapping).
-    \item \textbf{Annualised Sharpe ratio}: Mean PnL / Std PnL $\times \sqrt{252/h}$, computed on non-overlapping observations after transaction costs.
-\end{itemize}
-
-R-squared is deliberately not used as a primary metric, as it is less interpretable for signal-based trading strategies where even small positive correlations can be economically significant.
+We used 5-fold walk-forward cross-validation. For a given horizon $h$, we stop the training set $h$ days before the test set begins. This gap ensures no future information leaks into the training data.
 
 % ============================================================
-% 6. BACKTEST
+% 6. EVALUATION METRICS
 % ============================================================
-\section{Walk-Forward Backtest}
+\section{Backtest Design and Risk Metrics}
 
-\subsection{Position Sizing}
-
-Positions are sized proportionally to signal strength rather than using a binary sign function:
+Portfolio weights $w_t$ are sized based on the strength of the model's prediction, scaled to stay between -1 and 1:
 \begin{equation}
     w_t = \text{clip}\left(\frac{\hat{y}_t}{\hat{\sigma}_{\hat{y}}}, -1, 1\right)
 \end{equation}
-where $\hat{y}_t$ is the predicted return, $\hat{\sigma}_{\hat{y}}$ is the standard deviation of predictions, and the clip function constrains positions to $[-1, 1]$. This ensures that stronger signals receive larger allocations while capping maximum exposure.
-
-\subsection{Transaction Costs}
-
-A cost of 2 basis points per unit of turnover is applied:
-\begin{equation}
-    \text{Cost}_t = \frac{2}{10000} \times |w_t - w_{t-1}|
-\end{equation}
-Net PnL is then $\text{PnL}_t^{\text{net}} = w_t \cdot r_t - \text{Cost}_t$, where $r_t$ is the realised return.
-
-\subsection{Risk Metrics}
-
-Beyond Sharpe ratio, the following risk metrics are reported:
-\begin{itemize}[nosep]
-    \item \textbf{Maximum drawdown}: Largest peak-to-trough decline in cumulative PnL.
-    \item \textbf{Calmar ratio}: Annualised return divided by maximum drawdown.
-    \item \textbf{Win/loss ratio}: Average profit on winning trades divided by average loss on losing trades.
-    \item \textbf{Average daily turnover}: Mean absolute change in position.
-\end{itemize}
+where $\hat{y}_t$ is the prediction and $\hat{\sigma}_{\hat{y}}$ is the standard deviation of recent predictions. We apply a trading cost of 2 basis points for every trade. All metrics (IC, Hit Rate, Sharpe, Max Drawdown) are calculated on non-overlapping periods to provide realistic out-of-sample results.
 
 % ============================================================
 % 7. RESULTS
 % ============================================================
 \section{Results}
 
-\subsection{Main Results}
+The results show that better features lead to higher accuracy (Table \ref{tab:model_comp}). Adding engineered features to XGBoost improves the IC by about 10\% compared to using raw features.
 
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
-\caption{Walk-forward results --- XGBoost with engineered features (non-overlapping metrics)}
+\caption{Mean IC progression across walk-forward folds}
+\label{tab:model_comp}
 \begin{tabular}{@{}lcc@{}}
 \toprule
-\textbf{Metric} & \textbf{1-Week} & \textbf{1-Month} \\
+\textbf{Model Configuration} & \textbf{IC (5d)} & \textbf{IC (21d)} \\
 \midrule
-Pearson IC & 0.45 & 0.41 \\
-Hit Rate & 66--67\% & 63\% \\
-Annualised Sharpe & 2.2 & 1.6 \\
-Transaction Costs & 2 bps & 2 bps \\
+ElasticNet & 0.402 & 0.241 \\
+XGBoost (Raw Features) & 0.469 & 0.442 \\
+XGBoost (Engineered Features) & 0.517 & 0.492 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\subsection{Model Comparison}
+Table \ref{tab:detailed_metrics} shows the final performance of the engineered XGBoost model. The 5-day model performs very well, achieving a Sharpe ratio of 2.71 and a Calmar ratio of 1.37. The 21-day model also finds a real signal (IC = 0.461), but it suffers from massive volatility, with a maximum drawdown of -113.34\% and a Calmar ratio of just 0.11.
 
-\begin{table}[H]
+\begin{table}[htbp]
 \centering
-\caption{IC progression across models (approximate, averaged across walk-forward folds)}
-\begin{tabular}{@{}lccc@{}}
+\caption{Out-of-sample performance metrics (Engineered XGBoost, non-overlapping)}
+\label{tab:detailed_metrics}
+\begin{tabular}{@{}lcc@{}}
 \toprule
-\textbf{Model} & \textbf{IC (1w)} & \textbf{IC (1m)} & \textbf{Improvement} \\
+\textbf{Metric} & \textbf{5-Day Horizon} & \textbf{21-Day Horizon} \\
 \midrule
-ElasticNet & $\sim$0.30 & $\sim$0.25 & Baseline \\
-XGBoost (raw features) & $\sim$0.38 & $\sim$0.35 & +25\% \\
-XGBoost (engineered) & $\sim$0.45 & $\sim$0.41 & +50\% \\
+Pearson IC & 0.505 & 0.461 \\
+Hit Rate & 66.9\% & 64.1\% \\
+Annualised Sharpe Ratio & 2.71 & 1.51 \\
+Maximum Drawdown & -24.39\% & -113.34\% \\
+Calmar Ratio & 1.37 & 0.11 \\
+Win/Loss Ratio & 2.52 & 2.34 \\
+Average Daily Turnover & 40.59\% & 24.50\% \\
+$N$ Observations & 765 & 181 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Feature engineering contributes approximately 15--20\% improvement in IC over raw features, demonstrating that domain-informed transformations add value beyond what the tree model discovers through its own splits. The largest improvements come from rolling z-scores and momentum features.
-
-\subsection{Interpretation}
-
-An information coefficient of 0.45 on the 1-week horizon is strong by the standards of financial return prediction, where ICs above 0.05--0.10 are generally considered exploitable at scale. The hit rate of 66\% confirms directional predictability well above the 50\% random baseline.
-
-The annualised Sharpe ratio of 2.2 (1-week) after transaction costs indicates a high-quality signal. However, these results should be interpreted with caution: they apply to a single commodity with anonymised features, and real-world implementation would face additional challenges including market impact, liquidity constraints, and regime changes.
-
-Performance varies across walk-forward folds, with some folds producing Sharpe ratios below 1.0. This heterogeneity is consistent with regime-dependent predictability and highlights the importance of reporting fold-level statistics rather than aggregate averages alone.
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{figures/pnl_drawdown_1w.png}
+    
+    \vspace{0.5cm}
+    
+    \includegraphics[width=0.7\textwidth]{figures/pnl_drawdown_1m.png}
+    \caption{Simulated net performance. The 5-day horizon (top) generates compounding returns with contained drawdowns. The 21-day horizon (bottom) experiences severe variance and systemic drawdowns.}
+\end{figure}
 
 % ============================================================
 % 8. FEATURE IMPORTANCE
 % ============================================================
 \section{Feature Importance Analysis}
 
-SHAP (SHapley Additive exPlanations) values are computed on the last walk-forward fold to understand which features and engineered transformations drive predictions. Unlike split-based importance, SHAP provides both magnitude and direction of each feature's contribution.
+The XGBoost split gains show that engineered features are the most useful. The rolling 63-day and 21-day z-scores provide the most information. While the model uses lagged targets, it relies much more on the normalized features. This shows that knowing the recent volatility context is crucial for making good predictions.
 
-Key findings:
-\begin{itemize}[nosep]
-    \item Rolling z-scores and momentum features appear prominently among the top 20 predictors, confirming the value of feature engineering.
-    \item Target lags contribute meaningfully but do not dominate the importance ranking, suggesting the signal is not purely autoregressive.
-    \item Several raw features remain important even after engineering, indicating they carry information not fully captured by the transformations.
-    \item Interactions between raw features and their z-score variants suggest the model benefits from seeing both level and regime-normalised representations.
-\end{itemize}
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.48\textwidth]{figures/feature_importance_1w.png}
+    \hfill
+    \includegraphics[width=0.48\textwidth]{figures/feature_importance_1m.png}
+    \caption{Top 20 features ranked by mean XGBoost split gain for the 5-day (left) and 21-day (right) horizons.}
+\end{figure}
+
+\FloatBarrier % <--- LE MUR EST ICI : AUCUNE IMAGE NE PEUT PASSER APRÈS CE POINT
 
 % ============================================================
-% 9. LIMITATIONS
+% 9. LIMITATIONS AND FUTURE WORK
 % ============================================================
 \section{Limitations and Future Work}
 
-\subsection{Limitations}
+This study only looks at one commodity, so we do not know if these signals work for other assets. Because 43.0\% of the data is missing, the model might be learning from the pattern of missing data rather than real economic trends. Finally, our simple position sizing method is not safe for the 21-day horizon because the drawdowns are too large.
 
-\begin{itemize}[nosep]
-    \item \textbf{Single asset}: All results apply to one commodity. Cross-asset generalisation is untested; the signal may be commodity-specific.
-    \item \textbf{Anonymised features}: The absence of feature labels prevents economic interpretation, making it impossible to assess whether the model captures known risk premia or novel patterns.
-    \item \textbf{Regime dependence}: Performance varies meaningfully across walk-forward folds. Residual autocorrelation in some folds indicates unmodelled temporal structure.
-    \item \textbf{No hyperparameter optimisation}: XGBoost parameters are set to reasonable defaults but not optimised per fold. Overfitting risk is mitigated by regularisation but not eliminated.
-    \item \textbf{No market impact modelling}: The backtest assumes fills at the 2 bps cost level regardless of position size, which may understate real-world execution costs for larger allocations.
-\end{itemize}
-
-\subsection{Future Work}
-
-\begin{enumerate}[nosep]
-    \item \textbf{Hyperparameter tuning}: Bayesian optimisation (e.g.\ Optuna) on walk-forward folds, with the outer fold providing an unbiased estimate of generalisation.
-    \item \textbf{Ensemble methods}: Blend XGBoost and ElasticNet predictions, potentially weighting by inverse fold-level variance.
-    \item \textbf{Regime detection}: Use volatility clustering or hidden Markov models to build conditional models that adapt to market regimes.
-    \item \textbf{Multi-asset extension}: Test whether the signal and feature engineering pipeline generalise across commodities.
-    \item \textbf{Alternative architectures}: LightGBM, CatBoost, and temporal convolutional networks for capturing longer-range dependencies.
-\end{enumerate}
+Future work will add stop-losses and volatility targeting to manage risk better. We will also try to optimize the model's settings (like tree depth) and explore models that adapt to different market conditions.
 
 % ============================================================
 % 10. CONCLUSION
 % ============================================================
 \section{Conclusion}
 
-This project demonstrates that commodity returns at the 1-week and 1-month horizons contain exploitable predictive signal. A walk-forward validated XGBoost model with engineered features achieves an information coefficient of 0.45 (1-week) and 0.41 (1-month), with hit rates above 63\% and annualised Sharpe ratios of 1.6 to 2.2 after transaction costs.
-
-The central methodological contribution is the anti-leakage discipline applied throughout. Without temporal splits, horizon-shifted lags, embargo gaps, and non-overlapping metrics, the same data can produce dramatically inflated performance numbers. Every design choice in this pipeline was made to ensure that reported results would be reproducible in a live trading environment.
-
-Feature engineering contributes meaningfully: rolling z-scores, cross-sectional ranks, and momentum features improve IC by 15--20\% over raw inputs. The progression from linear to tree-based models shows diminishing but real returns to model complexity. The signal is real but regime-dependent, and any production deployment would require continuous monitoring and periodic recalibration.
+We successfully found predictive signals in short-term commodity returns using machine learning. By using a strict, non-overlapping testing method, our XGBoost model achieved an out-of-sample IC of 0.505 and a Sharpe ratio of 2.71 for the 5-day horizon. While the 21-day model also predicts well (IC = 0.461), trading it without a strict risk management strategy leads to unacceptable losses. Overall, this project shows that transforming features based on recent market conditions significantly improves predictions, but strong risk management is required for slower trading signals.
 
 \end{document}

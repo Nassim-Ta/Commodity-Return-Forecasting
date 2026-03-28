@@ -6,8 +6,8 @@ Predict 1-week and 1-month commodity returns using machine learning on 60 anonym
 
 | Horizon | Pearson IC | Hit Rate | Sharpe (ann.) | After Costs |
 |---------|-----------|----------|---------------|-------------|
-| 1-week  | 0.45      | 66–67%   | 2.2           | 2 bps       |
-| 1-month | 0.41      | 63%      | 1.6           | 2 bps       |
+| 1-week  | 0.505     | 66.9%    | 2.71          | 2 bps       |
+| 1-month | 0.461     | 64.1%    | 1.51          | 2 bps       |
 
 All metrics computed on **non-overlapping walk-forward OOS** observations only.
 
@@ -39,11 +39,11 @@ Every design choice prevents information from the future leaking into the past:
 
 ## Model Progression
 
-| Model | IC (1w) | IC (1m) | Δ vs baseline |
-|-------|---------|---------|---------------|
-| ElasticNet | ~0.30 | ~0.25 | — |
-| XGBoost (raw) | ~0.38 | ~0.35 | +25% |
-| **XGBoost (engineered)** | **~0.45** | **~0.41** | **+50%** |
+| Model | IC (1w) | IC (1m) |
+|-------|---------|---------|
+| ElasticNet | 0.402 | 0.241 |
+| XGBoost (Raw Features) | 0.469 | 0.442 |
+| **XGBoost (Engineered)** | **0.517** | **0.492** |
 
 ## Backtest
 

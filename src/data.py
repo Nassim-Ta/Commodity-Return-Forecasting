@@ -3,13 +3,22 @@ Data loading and initial validation.
 """
 
 import pandas as pd
+from pathlib import Path
 from .config import TARGETS
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-def load_data(features_path: str = "features.csv", output_path: str = "output.csv") -> tuple[pd.DataFrame, list[str]]:
+def load_data(features_path: str | Path | None = None, output_path: str | Path | None = None) -> tuple[pd.DataFrame, list[str]]:
     """
     Load and merge features and targets. Returns (df, feature_columns).
+
+    Defaults are relative to project root, not current working directory.
     """
+    if features_path is None:
+        features_path = PROJECT_ROOT / "features.csv"
+    if output_path is None:
+        output_path = PROJECT_ROOT / "output.csv"
+
     features_df = pd.read_csv(features_path, parse_dates=["Dates"])
     output_df = pd.read_csv(output_path, parse_dates=["Dates"])
 

@@ -76,7 +76,14 @@ def walkforward(
     df_wf = df_wf.dropna(subset=lag_cols)
 
     all_feat = feature_cols + lag_cols
-    X_all = df_wf[all_feat]
+    X_all = df_wf[all_feat].copy()
+
+    # Drop completely missing features to avoid SimpleImputer warnings.
+    all_nan_cols = X_all.columns[X_all.isna().all()].tolist()
+    if all_nan_cols:
+        X_all = X_all.drop(columns=all_nan_cols)
+        all_feat = [c for c in all_feat if c not in all_nan_cols]
+
     y_all = df_wf[target]
     dates_all = df_wf["Dates"]
 
@@ -95,6 +102,13 @@ def walkforward(
         y_train = y_all.iloc[train_idx]
         X_test = X_all.iloc[test_idx]
         y_test = y_all.iloc[test_idx]
+
+        # Drop columns that are entirely NaN in the training fold (sklearn imputer warning)
+        train_non_na_cols = X_train.columns[X_train.notna().any()].tolist()
+        if len(train_non_na_cols) < X_train.shape[1]:
+            dropped = [c for c in X_train.columns if c not in train_non_na_cols]
+            X_train = X_train[train_non_na_cols]
+            X_test = X_test[train_non_na_cols]
 
         model = (model_factory or make_xgboost)()
 

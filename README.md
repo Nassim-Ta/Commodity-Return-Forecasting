@@ -55,7 +55,7 @@ commodity-return-forecasting/
 ## Execution Instructions
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/commodity-return-forecasting.git
+git clone https://github.com/Nassim-Ta/commodity-return-forecasting.git
 cd commodity-return-forecasting
 uv sync
 ```

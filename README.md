@@ -60,7 +60,7 @@ cd commodity-return-forecasting
 uv sync
 ```
 
-> **Note**: Raw datasets (`features.csv`, `output.csv`) are structurally excluded from version control. Ensure they are placed in the project root prior to execution.
+> **Note**: Raw datasets (`features.csv`, `output.csv`) are structurally excluded from version control.
 
 ```bash
 # Execute the full validation and simulation pipeline

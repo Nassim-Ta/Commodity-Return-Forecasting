@@ -1,47 +1,52 @@
 """
-Feature engineering pipeline. All transformations are backward-looking only.
+Feature engineering. Every transform here is strictly backward-looking
+(rolling windows, shifts) so there's no future information leakage in the
+transforms themselves. Target-dependent operations (like selecting which
+features to enrich) are NOT done here — that would leak if computed on the
+full dataset before the walk-forward split.
+
+Previous version had a _get_top_features() that picked features by
+full-sample correlation with the target, then only engineered those.
+Removed that because it's a subtle but real form of look-ahead bias:
+the selection was conditioned on test-period target values.
+Now we just transform all 60 raw features uniformly.
 """
 
 import numpy as np
 import pandas as pd
-from .config import (
-    TARGETS, HORIZON_STEPS, ZSCORE_WINDOWS,
-    VOLATILITY_WINDOW, N_TOP_FEATURES
-)
+from .config import ZSCORE_WINDOWS, VOLATILITY_WINDOW, HORIZON_STEPS, TARGETS
 
 
-def _get_top_features(df: pd.DataFrame, feature_cols: list[str], target: str, n: int) -> list[str]:
-    """Return the n features most correlated (in absolute value) with target."""
-    corrs = df[feature_cols].corrwith(df[target]).abs()
-    return corrs.nlargest(n).index.tolist()
-
-
-def add_rolling_zscores(df: pd.DataFrame, feature_cols: list[str]) -> tuple[pd.DataFrame, list[str]]:
+def add_rolling_zscores(df, feature_cols):
     """
-    Rolling z-scores: (x - rolling_mean) / rolling_std.
-    Captures whether current values are unusual relative to recent history.
+    z-score relative to a trailing window.
+    Captures whether current value is unusual vs recent history.
     """
     df = df.copy()
     new_cols = []
-    new_data = {}
+    chunks = {}
 
-    for window in ZSCORE_WINDOWS:
+    for w in ZSCORE_WINDOWS:
         for col in feature_cols:
-            roll_mean = df[col].rolling(window, min_periods=window // 2).mean()
-            roll_std = df[col].rolling(window, min_periods=window // 2).std()
-            col_name = f"{col}_zscore_{window}d"
-            new_data[col_name] = (df[col] - roll_mean) / (roll_std + 1e-12)
-            new_cols.append(col_name)
+            mu = df[col].rolling(w, min_periods=w // 2).mean()
+            sigma = df[col].rolling(w, min_periods=w // 2).std()
+            name = f"{col}_zscore_{w}d"
+            chunks[name] = (df[col] - mu) / (sigma + 1e-12)
+            new_cols.append(name)
 
-    if new_data:
-        df = pd.concat([df, pd.DataFrame(new_data, index=df.index)], axis=1)
+    df = pd.concat([df, pd.DataFrame(chunks, index=df.index)], axis=1)
     return df, new_cols
 
 
-def add_cross_sectional_ranks(df: pd.DataFrame, feature_cols: list[str]) -> tuple[pd.DataFrame, list[str]]:
+def add_cross_sectional_ranks(df, feature_cols):
     """
-    Percentile rank of each feature relative to all features on the same date.
-    Robust to outliers and non-stationarity in levels.
+    Percentile rank across features on the same date.
+
+    NOTE: this is a within-row rank across heterogeneous features, NOT a
+    cross-asset rank (we only have one commodity). It acts as a nonlinear
+    rescaling that squashes outliers. Interpretation is limited since the
+    features are anonymised and may have very different natures. We keep it
+    because it empirically helps the tree model, but it's debatable.
     """
     df = df.copy()
     new_cols = []
@@ -49,103 +54,88 @@ def add_cross_sectional_ranks(df: pd.DataFrame, feature_cols: list[str]) -> tupl
     rank_data = {}
 
     for col in feature_cols:
-        col_name = f"{col}_xrank"
-        rank_data[col_name] = ranks[col]
-        new_cols.append(col_name)
+        name = f"{col}_xrank"
+        rank_data[name] = ranks[col]
+        new_cols.append(name)
 
-    if rank_data:
-        df = pd.concat([df, pd.DataFrame(rank_data, index=df.index)], axis=1)
+    df = pd.concat([df, pd.DataFrame(rank_data, index=df.index)], axis=1)
     return df, new_cols
 
 
-def add_rolling_volatility(df: pd.DataFrame, feature_cols: list[str]) -> tuple[pd.DataFrame, list[str]]:
-    """Rolling standard deviation of top features per target."""
+def add_rolling_volatility(df, feature_cols):
+    """Rolling std of each feature. Measures local instability."""
     df = df.copy()
     new_cols = []
-    seen = set()
-    vol_data = {}
+    chunks = {}
+    w = VOLATILITY_WINDOW
 
-    for target in TARGETS:
-        top_feats = _get_top_features(df, feature_cols, target, N_TOP_FEATURES)
-        for col in top_feats:
-            col_name = f"{col}_vol_{VOLATILITY_WINDOW}d"
-            if col_name not in seen:
-                vol_data[col_name] = df[col].rolling(VOLATILITY_WINDOW, min_periods=VOLATILITY_WINDOW // 2).std()
-                new_cols.append(col_name)
-                seen.add(col_name)
+    for col in feature_cols:
+        name = f"{col}_vol_{w}d"
+        chunks[name] = df[col].rolling(w, min_periods=w // 2).std()
+        new_cols.append(name)
 
-    if vol_data:
-        df = pd.concat([df, pd.DataFrame(vol_data, index=df.index)], axis=1)
+    df = pd.concat([df, pd.DataFrame(chunks, index=df.index)], axis=1)
     return df, new_cols
 
 
-def add_feature_lags(df: pd.DataFrame, feature_cols: list[str]) -> tuple[pd.DataFrame, list[str]]:
+def add_feature_lags(df, feature_cols, horizon):
     """
-    Lagged values of top features, shifted by at least the forecast horizon.
-    Captures momentum and mean-reversion in inputs.
+    Lagged values shifted by multiples of the horizon.
+    Shift is >= horizon so there's no overlap with the prediction window.
     """
     df = df.copy()
     new_cols = []
-    seen = set()
-    lag_data = {}
+    chunks = {}
 
-    for target in TARGETS:
-        horizon = HORIZON_STEPS[target]
-        top_feats = _get_top_features(df, feature_cols, target, N_TOP_FEATURES)
-        for col in top_feats:
-            for mult in [1, 2]:
-                lag = horizon * mult
-                col_name = f"{col}_lag{lag}"
-                if col_name not in seen:
-                    lag_data[col_name] = df[col].shift(lag)
-                    new_cols.append(col_name)
-                    seen.add(col_name)
+    for col in feature_cols:
+        for mult in [1, 2]:
+            lag = horizon * mult
+            name = f"{col}_lag{lag}"
+            if name not in chunks:  # avoid duplicates across horizons
+                chunks[name] = df[col].shift(lag)
+                new_cols.append(name)
 
-    if lag_data:
-        df = pd.concat([df, pd.DataFrame(lag_data, index=df.index)], axis=1)
+    df = pd.concat([df, pd.DataFrame(chunks, index=df.index)], axis=1)
     return df, new_cols
 
 
-def add_momentum(df: pd.DataFrame, feature_cols: list[str]) -> tuple[pd.DataFrame, list[str]]:
-    """Feature change over the forecast horizon."""
+def add_momentum(df, feature_cols, horizon):
+    """Change over the forecast horizon. Basically feature-level returns."""
     df = df.copy()
     new_cols = []
-    seen = set()
-    mom_data = {}
+    chunks = {}
 
-    for target in TARGETS:
-        horizon = HORIZON_STEPS[target]
-        top_feats = _get_top_features(df, feature_cols, target, N_TOP_FEATURES)
-        for col in top_feats:
-            col_name = f"{col}_mom_{horizon}d"
-            if col_name not in seen:
-                mom_data[col_name] = df[col] - df[col].shift(horizon)
-                new_cols.append(col_name)
-                seen.add(col_name)
+    for col in feature_cols:
+        name = f"{col}_mom_{horizon}d"
+        if name not in chunks:
+            chunks[name] = df[col] - df[col].shift(horizon)
+            new_cols.append(name)
 
-    if mom_data:
-        df = pd.concat([df, pd.DataFrame(mom_data, index=df.index)], axis=1)
+    df = pd.concat([df, pd.DataFrame(chunks, index=df.index)], axis=1)
     return df, new_cols
 
 
-def add_target_lags(df: pd.DataFrame, target: str, horizon: int, offsets: list[int]) -> tuple[pd.DataFrame, list[str]]:
+def add_target_lags(df, target, horizon, offsets):
     """
-    Horizon-shifted target lags: lag_k = target.shift(horizon + offset).
-    Prevents overlap between return windows.
+    Lagged target values. Each lag = horizon + offset so there's
+    no overlap between the return window we're predicting and the
+    lagged return window we're using as input.
     """
+    df = df.copy()
     lag_cols = []
     for offset in offsets:
         lag = horizon + offset
-        col_name = f"target_lag_{lag}"
-        df[col_name] = df[target].shift(lag)
-        lag_cols.append(col_name)
-    df = df.copy()
+        name = f"target_lag_{lag}"
+        df[name] = df[target].shift(lag)
+        lag_cols.append(name)
     return df, lag_cols
 
 
-def engineer_all_features(df: pd.DataFrame, feature_cols: list[str]) -> tuple[pd.DataFrame, list[str]]:
+def engineer_base_features(df, feature_cols):
     """
-    Run the full feature engineering pipeline. Returns (df, all_new_columns).
+    Target-independent transforms: z-scores, ranks, volatility.
+    Safe to run on the full dataset before the walk-forward split
+    because nothing here touches the target column.
     """
     df = df.copy()
     all_new = []
@@ -159,12 +149,25 @@ def engineer_all_features(df: pd.DataFrame, feature_cols: list[str]) -> tuple[pd
     df, cols = add_rolling_volatility(df, feature_cols)
     all_new.extend(cols)
 
-    df, cols = add_feature_lags(df, feature_cols)
-    all_new.extend(cols)
+    print(f"Base features: {len(all_new)} new columns")
+    return df, all_new
 
-    df, cols = add_momentum(df, feature_cols)
-    all_new.extend(cols)
 
-    print(f"Engineered {len(all_new)} new features (total: {len(feature_cols) + len(all_new)})")
+def engineer_target_features(df, feature_cols, target):
+    """
+    Horizon-dependent transforms: lags and momentum.
+    Also safe to pre-compute (they're just shifts of feature values),
+    but they depend on the specific horizon so we need the target name.
+    """
+    horizon = HORIZON_STEPS[target]
     df = df.copy()
+    all_new = []
+
+    df, cols = add_feature_lags(df, feature_cols, horizon)
+    all_new.extend(cols)
+
+    df, cols = add_momentum(df, feature_cols, horizon)
+    all_new.extend(cols)
+
+    print(f"Target-specific features ({target}, h={horizon}): {len(all_new)} new columns")
     return df, all_new

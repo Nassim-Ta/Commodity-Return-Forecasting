@@ -1,37 +1,53 @@
 # Commodity Return Forecasting
 
-This project forecasts 5-day and 21-day commodity returns using machine learning. We use XGBoost to extract patterns from 60 anonymized features. The methodology relies on a strict walk-forward cross-validation setup to ensure that no future information leaks into the past.
+Forecasting 5-day and 21-day commodity returns using XGBoost on 60 anonymised features. The methodology uses walk-forward cross-validation with embargo, early stopping, and causal position sizing — all designed to prevent look-ahead bias at every stage of the pipeline.
 
-## Empirical Results
+## Key Results
 
-| Forecast Horizon | Pearson IC | Hit Rate | Sharpe (ann.) | Transaction Costs |
-|------------------|-----------|----------|---------------|-------------------|
-| 5-day (1-week)   | 0.505     | 66.9%    | 2.71          | 2 bps             |
-| 21-day (1-month) | 0.461     | 64.1%    | 1.51          | 2 bps             |
+> **Note**: results below are from the corrected pipeline. An earlier version had a subtle feature-selection leak (see [Methodology Notes](#methodology-notes) below) which inflated ICs. The numbers here are from the clean version.
 
-An out-of-sample Information Coefficient (IC) of 0.505 shows a strong predictive signal. This high performance comes from careful feature engineering and strict testing methods, rather than just the choice of the machine learning model.
+| Forecast Horizon | Pearson IC | Hit Rate | Sharpe (ann.) | TC |
+|------------------|-----------|----------|---------------|-----|
+| 5-day (1-week)   | TBD       | TBD      | TBD           | 2 bps |
+| 21-day (1-month) | TBD       | TBD      | TBD           | 2 bps |
+
+*(Run `uv run python -m src.backtest` with data files in place to get updated numbers.)*
 
 ## Validation Framework
 
-To prevent look-ahead bias, our testing method is strictly chronological. All data preprocessing, such as filling missing values and scaling, is calculated using only the training data. We do not use random data shuffling. Target variables are shifted by the exact forecast horizon to avoid overlap. We also leave a gap of days between the training and testing sets in every fold. Finally, all performance metrics are calculated on non-overlapping periods to give a realistic view of future performance.
+Walk-forward with 5 folds. For each fold:
+1. Training data ends `h` days before the test period starts (embargo gap)
+2. XGBoost uses early stopping on the last 15% of training data (held out chronologically) to pick the number of trees, instead of using a fixed count
+3. All feature engineering (z-scores, lags, etc.) is backward-looking only
+4. Position sizing uses an expanding-window std of past predictions — it does NOT use the full test fold's prediction distribution, which would be a form of look-ahead
+5. IC and Sharpe are computed on non-overlapping observations to avoid autocorrelation inflation
+6. Bootstrap confidence intervals and a t-test on IC are reported for each fold
 
 ## Feature Engineering
 
-We expanded the dataset from 60 to 314 features using only past data. These new features help the model understand the recent market context. We calculated 21-day and 63-day rolling z-scores to measure how far values are from their recent average. We also used percentile ranks to reduce the impact of extreme outliers. Finally, we added 21-day rolling standard deviations to measure local volatility, along with lagged features and momentum (the change in a feature over the forecast horizon).
+We go from 60 to ~400 features using only past data:
+
+- **Rolling z-scores** (21d and 63d windows): how far is the current value from its recent average
+- **Cross-sectional percentile ranks**: nonlinear rescaling across features on the same date. Honestly this is debatable since we only have one asset — it's not a true cross-sectional rank. But it squashes outliers and the tree model seems to benefit from it
+- **Rolling volatility** (21d): local feature instability
+- **Lagged features**: shifted by the forecast horizon to avoid overlap with the prediction window
+- **Momentum**: feature change over the forecast horizon
+
+All transforms are applied uniformly to all 60 raw features. There is no target-based feature selection prior to the walk-forward split.
+
+## Methodology Notes
+
+The initial version of this project selected which features to enrich (volatility, lags, momentum) by computing full-sample correlations with the target. This is a form of look-ahead bias: the selection was conditioned on test-period target values, even though the transforms themselves were backward-looking. The current version removes this entirely — all features are transformed uniformly, and XGBoost's internal regularisation (colsample, depth limits, L1/L2) handles feature selection implicitly.
+
+Similarly, the original position sizing normalised predictions by `np.std(y_pred)` computed over the entire test fold, meaning early positions depended on future predictions. This is now replaced by an expanding-window normalisation.
 
 ## Model Progression
 
-The table below shows how adding engineered features improves model accuracy. The scores represent the average out-of-sample Information Coefficient across all test folds.
-
 | Architecture | IC (5d) | IC (21d) |
 |---|---------|----------|
-| ElasticNet (Linear Baseline) | 0.402 | 0.241 |
-| XGBoost (Raw Features) | 0.469 | 0.442 |
-| XGBoost (Engineered Space) | 0.517 | 0.492 |
-
-## Portfolio Simulation & Risk Dynamics
-
-In our backtest, the size of each trade is proportional to the strength of the model's prediction. We apply a trading cost of 2 basis points for every transaction. We track maximum drawdowns and Calmar ratios to evaluate risk. The results show that while the 21-day model makes accurate predictions, it suffers from massive drawdowns. This highlights the need for a strict stop-loss and volatility targeting strategy before trading this signal in real life.
+| ElasticNet (baseline) | TBD | TBD |
+| XGBoost (raw features) | TBD | TBD |
+| XGBoost (engineered) | TBD | TBD |
 
 ## Project Structure
 
@@ -39,20 +55,20 @@ In our backtest, the size of each trade is proportional to the strength of the m
 commodity-return-forecasting/
 ├── pyproject.toml
 ├── src/
-│   ├── config.py              # Constants, paths, hyperparameters
-│   ├── data.py                # Data ingestion and preprocessing
-│   ├── features.py            # Feature engineering transformations
-│   ├── models.py              # Architecture definitions
-│   ├── backtest.py            # Walk-forward validation & PnL simulation
-│   └── analysis.py            # SHAP values, metrics, plotting
+│   ├── config.py              # constants, hyperparams
+│   ├── data.py                # csv loading and merge
+│   ├── features.py            # feature transforms (all backward-looking)
+│   ├── models.py              # ElasticNet + XGBoost definitions
+│   ├── backtest.py            # walk-forward loop, PnL, statistics
+│   └── analysis.py            # EDA plots, feature importance, diagnostics
 ├── notebooks/
-│   └── exploration.ipynb      # EDA and statistical testing
+│   └── exploration.ipynb      # EDA and interactive analysis
 └── reports/
-    ├── report.tex             # LaTeX quantitative report
-    └── report.pdf             # Compiled document
+    ├── report.tex
+    └── report.pdf
 ```
 
-## Execution Instructions
+## Running
 
 ```bash
 git clone https://github.com/Nassim-Ta/commodity-return-forecasting.git
@@ -60,16 +76,16 @@ cd commodity-return-forecasting
 uv sync
 ```
 
-> **Note**: Raw datasets (`features.csv`, `output.csv`) are structurally excluded from version control.
+> Raw data (`features.csv`, `output.csv`) is excluded from version control.
 
 ```bash
-# Execute the full validation and simulation pipeline
+# full pipeline
 uv run python -m src.backtest
 
-# Launch interactive exploratory analysis
+# interactive EDA
 uv run jupyter notebook notebooks/exploration.ipynb
 ```
 
-## Documentation
+## Report
 
-A comprehensive quantitative report detailing the statistical methodology, feature importance analysis, and structural limitations is available in [`reports/report.pdf`](reports/report.pdf).
+Full writeup in [`reports/report.pdf`](reports/report.pdf).

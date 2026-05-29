@@ -1,7 +1,4 @@
-"""
-Model definitions. Keeping it minimal on purpose — the interesting
-stuff is in the backtest loop and feature engineering, not here.
-"""
+"""Model definitions."""
 
 from sklearn.linear_model import ElasticNetCV
 from sklearn.model_selection import TimeSeriesSplit
@@ -14,7 +11,7 @@ from .config import XGB_PARAMS
 
 
 def make_elasticnet():
-    """ElasticNet baseline with internal time-series CV for l1_ratio."""
+    """ElasticNet baseline with time-series CV for l1_ratio."""
     return Pipeline([
         ("imputer", SimpleImputer(strategy="mean")),
         ("scaler", StandardScaler()),
@@ -28,8 +25,7 @@ def make_elasticnet():
 
 def make_xgboost():
     """
-    XGBoost with conservative regularisation.
-    Early stopping is handled in the backtest loop (needs a val set),
-    so n_estimators here is an upper bound, not the actual number used.
+    XGBoost with conservative regularisation. n_estimators is an upper bound —
+    early stopping in the backtest loop picks the actual tree count.
     """
     return XGBRegressor(**XGB_PARAMS)

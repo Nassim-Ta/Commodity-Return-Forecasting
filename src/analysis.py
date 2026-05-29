@@ -1,6 +1,4 @@
-"""
-Post-hoc analysis: feature importance, PnL plots, diagnostics.
-"""
+"""Post-hoc analysis: feature importance, PnL plots, diagnostics."""
 
 import numpy as np
 import pandas as pd
@@ -100,7 +98,6 @@ def plot_rolling_correlations(df, targets, feature_cols, window=252):
 
 def plot_feature_correlation_matrix(df, feature_cols):
     corr = df[feature_cols].corr()
-    # count highly correlated pairs
     n_high = 0
     for i in range(len(corr)):
         for j in range(i + 1, len(corr)):
@@ -127,7 +124,6 @@ def plot_cumulative_pnl(oos, target, title_suffix=""):
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-    # NAV non-overlapping
     oos_no = oos.iloc[::horizon].copy()
     oos_no["nav"] = np.cumprod(1 + oos_no["net_ret"].values)
 
@@ -137,7 +133,6 @@ def plot_cumulative_pnl(oos, target, title_suffix=""):
     axes[0].set_ylabel("NAV")
     axes[0].grid(alpha=0.3)
 
-    # drawdown in %
     nav = np.cumprod(1 + oos["net_ret"].values)
     peak = np.maximum.accumulate(nav)
     dd_pct = (nav - peak) / peak * 100
@@ -187,10 +182,8 @@ def print_backtest_stats(oos, target):
 
 def plot_feature_importance(model, X_sample=None, n_top=20, title=""):
     """
-    Feature importance. Uses SHAP TreeExplainer if X_sample is provided,
-    otherwise falls back to XGBoost's built-in gain metric.
-
-    Pass X_sample from the last fold's test set for SHAP values.
+    Uses SHAP if X_sample is provided, otherwise falls back to
+    XGBoost's built-in gain metric.
     """
     try:
         if X_sample is None:
@@ -204,7 +197,6 @@ def plot_feature_importance(model, X_sample=None, n_top=20, title=""):
         ).sort_values(ascending=False)
         method = "SHAP"
     except Exception:
-        # fallback to gain
         importance = pd.Series(
             model.feature_importances_,
             index=model.get_booster().feature_names,

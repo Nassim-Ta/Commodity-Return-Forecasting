@@ -1,6 +1,4 @@
-"""
-Data loading. Nothing fancy, just reads the csvs and merges on date.
-"""
+"""Loads csvs and merges on date."""
 
 import pandas as pd
 from pathlib import Path

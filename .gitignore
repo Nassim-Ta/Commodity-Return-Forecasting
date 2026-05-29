@@ -32,3 +32,6 @@ results/*.png
 
 # Environment
 .env
+
+# Lockfile
+uv.lock

@@ -1,6 +1,4 @@
-"""
-Hyperparams and constants.
-"""
+"""Hyperparameters and constants."""
 
 TARGETS = ["output1_1w", "output1_1m"]
 
@@ -18,7 +16,6 @@ ZSCORE_WINDOWS = [21, 63]
 VOLATILITY_WINDOW = 21
 TARGET_LAGS_OFFSETS = [0, 1, 2, 5, 10]
 
-# xgboost — intentionally conservative regularisation
 # depth 4 instead of 5 to limit overfitting on 300+ features
 XGB_PARAMS = {
     "n_estimators": 1500,
@@ -32,9 +29,7 @@ XGB_PARAMS = {
     "tree_method": "hist",
 }
 
-# early stopping on a held-out chunk of training data
 EARLY_STOPPING_ROUNDS = 50
 EARLY_STOPPING_FRAC = 0.15  # last 15% of train becomes validation
 
-# capital initial pour normaliser le PnL en NAV
 INITIAL_CAPITAL = 1.0

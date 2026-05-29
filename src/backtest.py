@@ -1,13 +1,13 @@
 """
 Walk-forward backtest with embargo, early stopping, and causal position sizing.
 
-Changes from v1:
-- feature engineering is now done per-target (lags/momentum depend on horizon)
-  and does NOT select features by full-sample correlation (was a leak)
-- position sizing uses an expanding-window std instead of the full-fold std
-  (the old version used future predictions to normalise current ones)
-- XGBoost gets early stopping on a held-out validation chunk from training
-- added bootstrap CIs on IC to assess statistical significance
+Fixes from the initial version:
+- feature engineering no longer selects features by full-sample correlation
+  (that was a look-ahead leak — selection depended on test-period targets)
+- position sizing uses expanding-window std instead of full-fold std
+  (old version used future predictions to normalise current ones)
+- XGBoost gets early stopping on a chronological validation chunk
+- added bootstrap CIs on IC
 """
 
 import numpy as np
@@ -30,9 +30,8 @@ def _non_overlap_indices(n, horizon):
 
 def _compute_pnl_causal(y_pred, y_true, cost_bps, warmup=20):
     """
-    PnL with causal sizing and multiplicative NAV.
-    y_true is in percentage points (e.g. 1.5 = 1.5%), so we
-    divide by 100 to get fractional returns for compounding.
+    PnL with causal sizing. y_true is in percentage points (1.5 = 1.5%),
+    so we divide by 100 for compounding.
     """
     n = len(y_pred)
     position = np.zeros(n)
@@ -41,16 +40,15 @@ def _compute_pnl_causal(y_pred, y_true, cost_bps, warmup=20):
         if t < warmup:
             position[t] = np.sign(y_pred[t])
         else:
+            # expanding-window normalisation — only uses past predictions
             pred_std = np.std(y_pred[:t + 1]) + 1e-12
             position[t] = np.clip(y_pred[t] / pred_std, -1, 1)
 
-    # fractional portfolio return each period
     port_ret = position * y_true / 100
     turnover = np.abs(np.diff(position, prepend=0))
     cost = (cost_bps / 10_000) * turnover
     net_ret = port_ret - cost
 
-    # multiplicative NAV
     nav = np.cumprod(1 + net_ret)
     peak = np.maximum.accumulate(nav)
     dd_pct = ((nav - peak) / peak) * 100
@@ -63,11 +61,9 @@ def _compute_pnl_causal(y_pred, y_true, cost_bps, warmup=20):
         "max_dd": max_dd_pct,
         "avg_turnover": np.mean(turnover),
     }
+
 def _bootstrap_ic(y_pred, y_true, n_boot=2000, seed=42):
-    """
-    Bootstrap confidence interval on the Pearson IC.
-    Returns (mean, lower_95, upper_95).
-    """
+    """Bootstrap 95% CI on Pearson IC."""
     rng = np.random.RandomState(seed)
     n = len(y_pred)
     ics = np.empty(n_boot)
@@ -86,35 +82,20 @@ def walkforward(
     use_early_stopping=True,
 ):
     """
-    Walk-forward with embargo and optional early stopping.
-
-    Parameters
-    ----------
-    df : DataFrame with all features already engineered + 'Dates' + target
-    feature_cols : columns to use as model inputs (excluding target lags)
-    target : target column name
-    model_factory : callable returning a fresh model (default: XGBoost)
-    n_splits : number of walk-forward folds
-    use_early_stopping : if True, carve out a validation set from training
-                         for XGBoost early stopping (ignored for pipelines)
-
-    Returns
-    -------
-    fold_results, oos_df, last_model
+    Walk-forward CV with embargo. Returns (fold_results, oos_df, last_model).
     """
     horizon = HORIZON_STEPS[target]
-    is_xgb = model_factory is None  # default is xgboost
+    is_xgb = model_factory is None
 
     df_wf = df.dropna(subset=[target]).copy()
 
-    # target lags (shifted by >= horizon, no overlap)
+    # target lags shifted by >= horizon to avoid overlap
     df_wf, lag_cols = add_target_lags(df_wf, target, horizon, TARGET_LAGS_OFFSETS)
     df_wf = df_wf.dropna(subset=lag_cols)
 
     all_feat = feature_cols + lag_cols
     X_all = df_wf[all_feat].copy()
 
-    # drop columns that are entirely nan
     all_nan = X_all.columns[X_all.isna().all()].tolist()
     if all_nan:
         X_all = X_all.drop(columns=all_nan)
@@ -131,7 +112,7 @@ def walkforward(
         if len(train_idx) <= horizon:
             continue
 
-        # embargo: remove last `horizon` rows from training
+        # embargo: drop last `horizon` rows from training
         train_idx = train_idx[:-horizon]
 
         X_train = X_all.iloc[train_idx]
@@ -139,7 +120,6 @@ def walkforward(
         X_test = X_all.iloc[test_idx]
         y_test = y_all.iloc[test_idx]
 
-        # drop cols that are all-nan in this specific fold
         valid_cols = X_train.columns[X_train.notna().any()].tolist()
         if len(valid_cols) < X_train.shape[1]:
             X_train = X_train[valid_cols]
@@ -147,9 +127,8 @@ def walkforward(
 
         model = (model_factory or make_xgboost)()
 
-        # --- fit ---
         if is_xgb and use_early_stopping and not hasattr(model, "steps"):
-            # carve a validation set from the end of training (chronological)
+            # chronological val set from the end of training
             n_train = len(X_train)
             n_val = max(int(n_train * EARLY_STOPPING_FRAC), horizon)
             split_point = n_train - n_val
@@ -166,14 +145,13 @@ def walkforward(
                 verbose=False,
             )
         elif hasattr(model, "steps"):
-            # sklearn pipeline (ElasticNet)
             model.fit(X_train, y_train)
         else:
             model.fit(X_train, y_train, verbose=False)
 
         y_pred = model.predict(X_test)
 
-        # --- non-overlapping metrics ---
+        # non-overlapping metrics
         idx_no = _non_overlap_indices(len(y_test), horizon)
         y_test_no = y_test.values[idx_no]
         y_pred_no = y_pred[idx_no]
@@ -181,10 +159,8 @@ def walkforward(
         ic = np.corrcoef(y_pred_no, y_test_no)[0, 1]
         hit_rate = (np.sign(y_pred_no) == np.sign(y_test_no)).mean()
 
-        # bootstrap CI on IC
         ic_mean, ic_lo, ic_hi = _bootstrap_ic(y_pred_no, y_test_no)
 
-        # causal PnL
         pnl_info = _compute_pnl_causal(y_pred, y_test.values, COST_BPS)
         ret_no = pnl_info["net_ret"][idx_no]
         sharpe = (
@@ -229,7 +205,6 @@ def print_results(results, target, model_name):
     std_ic = results["ic"].std()
     n = len(results)
 
-    # t-test: H0: IC = 0
     if n > 1 and std_ic > 0:
         t_stat = mean_ic / (std_ic / np.sqrt(n))
         p_val = 2 * (1 - stats.t.cdf(abs(t_stat), df=n - 1))
@@ -268,7 +243,6 @@ if __name__ == "__main__":
 
     # --- XGBoost on engineered features ---
     for target in TARGETS:
-        # add horizon-specific lags and momentum
         df_full, tgt_cols = engineer_target_features(df_base, raw_cols, target)
         full_feature_set = base_feature_set + tgt_cols
 

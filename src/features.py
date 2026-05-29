@@ -1,15 +1,11 @@
 """
-Feature engineering. Every transform here is strictly backward-looking
-(rolling windows, shifts) so there's no future information leakage in the
-transforms themselves. Target-dependent operations (like selecting which
-features to enrich) are NOT done here — that would leak if computed on the
-full dataset before the walk-forward split.
+Feature engineering — all transforms are strictly backward-looking
+(rolling windows, shifts), so no future leak in the transforms themselves.
 
-Previous version had a _get_top_features() that picked features by
-full-sample correlation with the target, then only engineered those.
-Removed that because it's a subtle but real form of look-ahead bias:
-the selection was conditioned on test-period target values.
-Now we just transform all 60 raw features uniformly.
+Earlier version picked which features to enrich using full-sample
+correlation with the target. That's look-ahead bias: the selection
+depended on test-period targets. Removed it — we now transform
+all 60 raw features uniformly and let the model sort out relevance.
 """
 
 import numpy as np
@@ -18,10 +14,7 @@ from .config import ZSCORE_WINDOWS, VOLATILITY_WINDOW, HORIZON_STEPS, TARGETS
 
 
 def add_rolling_zscores(df, feature_cols):
-    """
-    z-score relative to a trailing window.
-    Captures whether current value is unusual vs recent history.
-    """
+    """Trailing-window z-score: is the current value unusual vs recent history."""
     df = df.copy()
     new_cols = []
     chunks = {}
@@ -42,11 +35,10 @@ def add_cross_sectional_ranks(df, feature_cols):
     """
     Percentile rank across features on the same date.
 
-    NOTE: this is a within-row rank across heterogeneous features, NOT a
-    cross-asset rank (we only have one commodity). It acts as a nonlinear
-    rescaling that squashes outliers. Interpretation is limited since the
-    features are anonymised and may have very different natures. We keep it
-    because it empirically helps the tree model, but it's debatable.
+    This is a within-row rank across heterogeneous features, not a proper
+    cross-asset rank (we only have one commodity). Mainly acts as a nonlinear
+    rescaling that squashes outliers. Debatable whether it means much with
+    anonymised features, but the tree model benefits empirically.
     """
     df = df.copy()
     new_cols = []
@@ -63,7 +55,7 @@ def add_cross_sectional_ranks(df, feature_cols):
 
 
 def add_rolling_volatility(df, feature_cols):
-    """Rolling std of each feature. Measures local instability."""
+    """Rolling std — measures local instability of each feature."""
     df = df.copy()
     new_cols = []
     chunks = {}
@@ -79,10 +71,7 @@ def add_rolling_volatility(df, feature_cols):
 
 
 def add_feature_lags(df, feature_cols, horizon):
-    """
-    Lagged values shifted by multiples of the horizon.
-    Shift is >= horizon so there's no overlap with the prediction window.
-    """
+    """Lagged values shifted by multiples of the horizon — no overlap with prediction window."""
     df = df.copy()
     new_cols = []
     chunks = {}
@@ -91,7 +80,7 @@ def add_feature_lags(df, feature_cols, horizon):
         for mult in [1, 2]:
             lag = horizon * mult
             name = f"{col}_lag{lag}"
-            if name not in chunks:  # avoid duplicates across horizons
+            if name not in chunks:
                 chunks[name] = df[col].shift(lag)
                 new_cols.append(name)
 
@@ -100,7 +89,7 @@ def add_feature_lags(df, feature_cols, horizon):
 
 
 def add_momentum(df, feature_cols, horizon):
-    """Change over the forecast horizon. Basically feature-level returns."""
+    """Change over the forecast horizon — basically feature-level returns."""
     df = df.copy()
     new_cols = []
     chunks = {}
@@ -117,9 +106,8 @@ def add_momentum(df, feature_cols, horizon):
 
 def add_target_lags(df, target, horizon, offsets):
     """
-    Lagged target values. Each lag = horizon + offset so there's
-    no overlap between the return window we're predicting and the
-    lagged return window we're using as input.
+    Lagged target values. Each lag = horizon + offset to avoid any overlap
+    between the return window we're predicting and the one we use as input.
     """
     df = df.copy()
     lag_cols = []
@@ -135,7 +123,7 @@ def engineer_base_features(df, feature_cols):
     """
     Target-independent transforms: z-scores, ranks, volatility.
     Safe to run on the full dataset before the walk-forward split
-    because nothing here touches the target column.
+    since nothing here touches the target column.
     """
     df = df.copy()
     all_new = []
@@ -155,9 +143,9 @@ def engineer_base_features(df, feature_cols):
 
 def engineer_target_features(df, feature_cols, target):
     """
-    Horizon-dependent transforms: lags and momentum.
-    Also safe to pre-compute (they're just shifts of feature values),
-    but they depend on the specific horizon so we need the target name.
+    Horizon-dependent transforms (lags, momentum). Also safe to pre-compute
+    since they're just shifts of feature values, but they need the target
+    name to determine the horizon.
     """
     horizon = HORIZON_STEPS[target]
     df = df.copy()

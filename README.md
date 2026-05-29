@@ -4,7 +4,7 @@ Forecasting short-horizon commodity returns with walk-forward validation and loo
 
 ## Context
 
-Personal research project, also submitted as a take-home challenge for a commodity trading role. The dataset is anonymised and not included in this repo.
+Personal research project. Dataset is anonymised and proprietary: not included.
 
 ## Pipeline
 

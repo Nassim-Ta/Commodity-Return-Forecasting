@@ -16,7 +16,7 @@ Personal research project, also submitted as a take-home challenge for a commodi
 
 ## Key issue found and fixed
 
-Mid-project I discovered that the original feature-selection step was a form of look-ahead bias: it picked which features to enrich based on full-sample correlation with the target, meaning the selection was conditioned on test-period returns. Removed that entirely — all features are now transformed uniformly, and the model's own regularisation handles relevance. Also fixed position sizing, which had been normalising by the full fold's prediction std (future information).
+Mid-project I discovered that the original feature-selection step was a form of look-ahead bias: it picked which features to enrich based on full-sample correlation with the target, meaning the selection was conditioned on test-period returns. Also fixed position sizing, which had been normalising by the full fold's prediction std (future information).
 
 ## Results
 

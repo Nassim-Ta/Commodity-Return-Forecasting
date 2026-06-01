@@ -9,7 +9,7 @@ Personal research project. Dataset is anonymised and proprietary: not included.
 ## Pipeline
 
 1. **Raw data**: 60 anonymised features, ~6500 daily observations
-2. **Feature engineering**: 60 → 314 features — rolling z-scores (21d/63d), cross-sectional percentile ranks, rolling volatility, lagged values, momentum. All transforms are backward-looking only
+2. **Feature engineering**: 60 → 314 features : rolling z-scores (21d/63d), cross-sectional percentile ranks, rolling volatility, lagged values, momentum. All transforms are backward-looking only
 3. **Models**: ElasticNet baseline, XGBoost with conservative regularisation and early stopping
 4. **Validation**: walk-forward (5 folds, embargo gap of one forecast horizon, non-overlapping return periods). Position sizing uses expanding-window normalisation to avoid look-ahead in the backtest
 5. **Costs**: 2 bps per unit turnover applied before computing all performance metrics

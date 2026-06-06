@@ -1,10 +1,11 @@
 """
-Feature engineering — all transforms are strictly backward-looking
+Feature engineering:
+All transforms are strictly backward-looking
 (rolling windows, shifts), so no future leak in the transforms themselves.
 
 Earlier version picked which features to enrich using full-sample
 correlation with the target. That's look-ahead bias: the selection
-depended on test-period targets. Removed it — we now transform
+depended on test-period targets. Removed it, we now transform
 all 60 raw features uniformly and let the model sort out relevance.
 """
 
@@ -55,7 +56,7 @@ def add_cross_sectional_ranks(df, feature_cols):
 
 
 def add_rolling_volatility(df, feature_cols):
-    """Rolling std — measures local instability of each feature."""
+    """Rolling std : measures local instability of each feature."""
     df = df.copy()
     new_cols = []
     chunks = {}
@@ -71,7 +72,7 @@ def add_rolling_volatility(df, feature_cols):
 
 
 def add_feature_lags(df, feature_cols, horizon):
-    """Lagged values shifted by multiples of the horizon — no overlap with prediction window."""
+    """Lagged values shifted by multiples of the horizon (no overlap with prediction window)."""
     df = df.copy()
     new_cols = []
     chunks = {}
@@ -89,7 +90,7 @@ def add_feature_lags(df, feature_cols, horizon):
 
 
 def add_momentum(df, feature_cols, horizon):
-    """Change over the forecast horizon — basically feature-level returns."""
+    """Change over the forecast horizon."""
     df = df.copy()
     new_cols = []
     chunks = {}

@@ -25,7 +25,6 @@ def make_elasticnet():
 
 def make_xgboost():
     """
-    XGBoost with conservative regularisation. n_estimators is an upper bound —
-    early stopping in the backtest loop picks the actual tree count.
+    XGBoost with conservative regularisation.
     """
     return XGBRegressor(**XGB_PARAMS)

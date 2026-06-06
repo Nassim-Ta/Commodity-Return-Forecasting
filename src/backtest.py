@@ -3,7 +3,7 @@ Walk-forward backtest with embargo, early stopping, and causal position sizing.
 
 Fixes from the initial version:
 - feature engineering no longer selects features by full-sample correlation
-  (that was a look-ahead leak — selection depended on test-period targets)
+  (that was a look-ahead leak)
 - position sizing uses expanding-window std instead of full-fold std
   (old version used future predictions to normalise current ones)
 - XGBoost gets early stopping on a chronological validation chunk
